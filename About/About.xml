@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ModMetaData>
-  <name>Numbers Performance Fix</name>
+  <name>Numbers Fixes</name>
   <author>ifchen0</author>
   <packageId>ifchen0.numbersperformancefix</packageId>
   <supportedVersions><li>1.6</li></supportedVersions>
-  <description>Unofficial performance fix for Numbers. Reduces the lag while a Numbers tab is open.
+  <description>Unofficial performance and bug fixes for Numbers. Reduces the lag while a Numbers tab is open, and fixes the prisoner interaction column.
 
 Numbers redraws its window several times per frame, and every time it:
 - builds and sorts every drop-down menu at the top (Stats, Health, Abilities, Other...), even though they are only needed when a button is clicked;
@@ -19,6 +19,8 @@ Fix:
 - Text and icon cells (stats, records, capacities, jobs, health...) are cached for about half a second (not recalculated at all while paused), including columns from other mods and need-bar arrows. Outdated cells keep their last value and are recalculated oldest first, averaging at most about 1 ms per frame, so expensive columns such as melee DPS no longer cause stutter (they may lag a few seconds behind while the game runs). A click or key press refreshes all cells.
 - Sorting by a stat column calculates each pawn's value once per sort. The order is the same.
 - Skill, disease, gear and inventory tooltips are built only for the cell under the mouse.
+
+Also fixes the prisoner interaction column: Hemogen farm and Bloodfeed only are now checkboxes that can be combined with the other modes, as in the vanilla prisoner tab (they could not be set before).
 
 Interactive columns (inventory, equipment, drop buttons) still update instantly.
 With Development mode on, the most expensive Numbers columns are logged every 10 seconds.

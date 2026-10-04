@@ -1,4 +1,4 @@
-Unofficial performance fix for [url=https://steamcommunity.com/sharedfiles/filedetails/?id=1414302321]Numbers[/url]. Reduces the lag while a Numbers tab is open, especially with expensive stat columns such as melee DPS.
+Unofficial performance and bug fixes for [url=https://steamcommunity.com/sharedfiles/filedetails/?id=1414302321]Numbers[/url]. Reduces the lag while a Numbers tab is open, especially with expensive stat columns such as melee DPS, and fixes the prisoner interaction column.
 
 [h2]Header menus and count[/h2][b]Cause:[/b] Numbers redraws its window several times per frame. Every time, it builds and sorts every drop-down menu at the top ([i]Stats[/i], [i]Health[/i], [i]Abilities[/i], [i]Other[/i]...), although a menu is only needed when its button is clicked, and it counts every pawn and corpse on the map for the [i]Count[/i] label.
 
@@ -15,6 +15,10 @@ Unofficial performance fix for [url=https://steamcommunity.com/sharedfiles/filed
 [h2]Tooltips[/h2][b]Cause:[/b] Skill and disease-progression cells build their full tooltip text, and gear and inventory cells build every item's label, on every redraw, even when the mouse is not over them.
 
 [b]Fix:[/b] The tooltip is built only for the cell under the mouse.
+
+[h2]Prisoner interaction column[/h2][b]Bug:[/b] Numbers shows [i]Hemogen farm[/i] and [i]Bloodfeed only[/i] as radio buttons, but in vanilla they are independent options that can be combined with the others. Clicking them did nothing.
+
+[b]Fix:[/b] They are now checkboxes (drag to toggle several prisoners), like in the vanilla prisoner tab. Enabling hemogen farming also adds or removes the hemogen extraction bill, as vanilla does.
 
 [h2]Notes[/h2][list]
 [*]Interactive columns (inventory, equipment, drop buttons) still update instantly; only their tooltips are built lazily.

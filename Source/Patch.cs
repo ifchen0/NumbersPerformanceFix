@@ -101,6 +101,10 @@ namespace NumbersPerformanceFix
             harmony.Patch(AccessTools.DeclaredMethod(typeof(PawnColumnWorker_Need), nameof(PawnColumnWorker.DoCell)),
                 transpiler: new HarmonyMethod(typeof(NeedCache), nameof(NeedCache.Transpiler)));
 
+            // Prisoner interaction: non-exclusive modes (hemogen farm, bloodfeed only) are checkboxes, as in vanilla.
+            harmony.Patch(AccessTools.DeclaredMethod(typeof(PawnColumnWorker_PrisonerInteraction), "DrawInteractionRadioButton"),
+                prefix: new HarmonyMethod(typeof(PrisonerInteractionPatch), nameof(PrisonerInteractionPatch.Prefix)));
+
             // Dev mode only: per-column cell cost, logged periodically while a Numbers table is open.
             harmony.Patch(AccessTools.Method(typeof(PawnTable), nameof(PawnTable.PawnTableOnGUI)),
                 transpiler: new HarmonyMethod(typeof(CellProfiler), nameof(CellProfiler.Transpiler)));
@@ -364,6 +368,47 @@ namespace NumbersPerformanceFix
                 cache.Clear();
             cache[need] = CacheClock.Stamp(value);
             return value;
+        }
+    }
+
+    /// <summary>
+    /// Numbers draws every prisoner interaction mode as a radio button and calls
+    /// SetExclusiveInteraction, which vanilla rejects for non-exclusive modes (hemogen farm,
+    /// bloodfeed only). Draw those as paintable checkboxes and toggle them like ITab_Pawn_Visitor.
+    /// </summary>
+    public static class PrisonerInteractionPatch
+    {
+        public static bool Prefix(Rect rect, Pawn pawn, PrisonerInteractionModeDef prisonerInteraction)
+        {
+            if (!prisonerInteraction.isNonExclusiveInteraction)
+                return true;
+
+            bool enabled = pawn.guest.IsInteractionEnabled(prisonerInteraction);
+            bool checkOn = enabled;
+            Widgets.Checkbox(rect.x, rect.y, ref checkOn, paintable: true);
+            if (checkOn != enabled)
+            {
+                pawn.guest.ToggleNonExclusiveInteraction(prisonerInteraction, checkOn);
+                NonExclusiveInteractionToggled(pawn, prisonerInteraction, checkOn);
+            }
+            return false;
+        }
+
+        // Same as ITab_Pawn_Visitor.NonExclusiveInteractionToggled, for an arbitrary pawn.
+        private static void NonExclusiveInteractionToggled(Pawn pawn, PrisonerInteractionModeDef mode, bool enabled)
+        {
+            if (!ModsConfig.BiotechActive || mode != PrisonerInteractionModeDefOf.HemogenFarm)
+                return;
+            Bill bill = pawn.BillStack?.Bills?.FirstOrDefault(x => x.recipe == RecipeDefOf.ExtractHemogenPack);
+            if (enabled)
+            {
+                if (bill == null && SanguophageUtility.CanSafelyBeQueuedForHemogenExtraction(pawn))
+                    HealthCardUtility.CreateSurgeryBill(pawn, RecipeDefOf.ExtractHemogenPack, null);
+            }
+            else if (bill != null)
+            {
+                pawn.BillStack.Bills.Remove(bill);
+            }
         }
     }
 
