@@ -1,0 +1,25 @@
+Unofficial performance fix for [url=https://steamcommunity.com/sharedfiles/filedetails/?id=1414302321]Numbers[/url]. Reduces the lag while a Numbers tab is open, especially with expensive stat columns such as melee DPS.
+
+[h2]Header menus and count[/h2][b]Cause:[/b] Numbers redraws its window several times per frame. Every time, it builds and sorts every drop-down menu at the top ([i]Stats[/i], [i]Health[/i], [i]Abilities[/i], [i]Other[/i]...), although a menu is only needed when its button is clicked, and it counts every pawn and corpse on the map for the [i]Count[/i] label.
+
+[b]Fix:[/b] Menus are built only when you click a button; the menus you get are the same. The count is refreshed twice per second.
+
+[h2]Text cells[/h2][b]Cause:[/b] Every text cell (stats, records, capacities, jobs...) is recalculated on every redraw. Stats are requested without any cache, so a column like melee DPS recalculates every pawn's attacks several times per frame.
+
+[b]Fix:[/b] Cell text is cached. Outdated cells keep their last value and are recalculated a few at a time, at most about 1 ms per frame, so expensive columns are spread over several frames instead of causing a stutter. After a click or key press all cells are refreshed within a few frames.
+
+[h2]Sorting by a stat column[/h2][b]Cause:[/b] [i]PawnColumnWorker_Stat.Compare[/i] calculates the stat for both pawns on every comparison, so a sort calculates each pawn's stat many times.
+
+[b]Fix:[/b] Each pawn's value is calculated once per sort. The resulting order is the same. With very expensive stats there is still a short pause, since every pawn's value is needed once.
+
+[h2]Tooltips[/h2][b]Cause:[/b] Skill and disease-progression cells build their full tooltip text on every redraw, even when the mouse is not over them.
+
+[b]Fix:[/b] The tooltip is built only for the cell under the mouse.
+
+[h2]Notes[/h2][list]
+[*]Interactive columns (inventory, equipment, drop buttons) are not touched and still update instantly.
+[*]Requires Numbers. Load after Numbers.
+[*]Safe to add to or remove from an existing save.
+[/list]
+[hr][/hr]
+This mod was developed with the help of AI coding tools (Claude Code). Full source code is included in the Source folder for review.

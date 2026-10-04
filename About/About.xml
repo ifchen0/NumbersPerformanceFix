@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>Numbers Performance Fix</name>
+  <author>ifchen0</author>
+  <packageId>ifchen0.numbersperformancefix</packageId>
+  <supportedVersions><li>1.6</li></supportedVersions>
+  <description>Unofficial performance fix for Numbers. Reduces the lag while a Numbers tab is open.
+
+Numbers redraws its window several times per frame, and every time it:
+- builds and sorts every drop-down menu at the top (Stats, Health, Abilities, Other...), even though they are only needed when a button is clicked;
+- counts every pawn and corpse on the map for the "Count" label;
+- recalculates every text cell from scratch (stat values are requested without any cache), so expensive stats such as melee DPS cost a lot every frame;
+- builds the full tooltip text of every skill and disease cell, even when the mouse is not over it.
+Sorting by a stat column also recalculated the stat for both pawns on every comparison.
+
+Fix:
+- Menus are built only when you click a button. The menus you get are the same.
+- The count is refreshed twice per second.
+- Text cells (stats, records, capacities, jobs...) are cached. Outdated cells keep their last value and are recalculated a few at a time, at most about 1 ms per frame, so even expensive columns no longer cause stutter. After a click or key press all cells are refreshed within a few frames.
+- Sorting by a stat column calculates each pawn's value once per sort. The order is the same.
+- Skill and disease tooltips are built only for the cell under the mouse.
+
+Interactive columns (inventory, equipment, drop buttons) are not touched and still update instantly.
+
+Notes:
+- Requires Numbers. Load after Numbers.
+- Safe to add to or remove from an existing save.</description>
+  <modDependencies>
+    <li><packageId>brrainz.harmony</packageId><displayName>Harmony</displayName><steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl></li>
+    <li><packageId>Mehni.Numbers</packageId><displayName>Numbers</displayName><steamWorkshopUrl>steam://url/CommunityFilePage/1414302321</steamWorkshopUrl></li>
+  </modDependencies>
+  <loadAfter>
+    <li>brrainz.harmony</li>
+    <li>Mehni.Numbers</li>
+  </loadAfter>
+</ModMetaData>
