@@ -16,11 +16,12 @@ Sorting by a stat column also recalculated the stat for both pawns on every comp
 Fix:
 - Menus are built only when you click a button. The menus you get are the same.
 - The count is refreshed twice per second.
-- Text cells (stats, records, capacities, jobs...) are cached. Outdated cells keep their last value and are recalculated a few at a time, at most about 1 ms per frame, so even expensive columns no longer cause stutter. After a click or key press all cells are refreshed within a few frames.
+- Text and icon cells (stats, records, capacities, jobs, health...) are cached for about half a second (not recalculated at all while paused), including columns from other mods and need-bar arrows. Outdated cells keep their last value and are recalculated oldest first, averaging at most about 1 ms per frame, so expensive columns such as melee DPS no longer cause stutter (they may lag a few seconds behind while the game runs). A click or key press refreshes all cells.
 - Sorting by a stat column calculates each pawn's value once per sort. The order is the same.
-- Skill and disease tooltips are built only for the cell under the mouse.
+- Skill, disease, gear and inventory tooltips are built only for the cell under the mouse.
 
-Interactive columns (inventory, equipment, drop buttons) are not touched and still update instantly.
+Interactive columns (inventory, equipment, drop buttons) still update instantly.
+With Development mode on, the most expensive Numbers columns are logged every 10 seconds.
 
 Notes:
 - Requires Numbers. Load after Numbers.

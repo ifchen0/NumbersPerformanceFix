@@ -50,19 +50,33 @@ namespace NumbersPerformanceFix
             harmony.Patch(AccessTools.Method(typeof(MainTabWindow_Numbers), nameof(MainTabWindow_Numbers.DoWindowContents)),
                 transpiler: new HarmonyMethod(typeof(HeaderPatch), nameof(HeaderPatch.Transpiler)));
 
-            // Text cells: short-lived cache of GetTextFor for every Numbers text column.
+            // Text and icon cells: short-lived cache of GetTextFor / GetIconFor. Covers every mod's
+            // columns, but only serves cached values while a Numbers window is being drawn.
             var textPrefix = new HarmonyMethod(typeof(TextCache), nameof(TextCache.Prefix));
             var textFinalizer = new HarmonyMethod(typeof(TextCache), nameof(TextCache.Finalizer));
             int textPatched = 0;
-            foreach (Type type in typeof(MainTabWindow_Numbers).Assembly.GetTypes())
+            foreach (Type type in typeof(PawnColumnWorker_Text).AllSubclasses())
             {
-                if (!typeof(PawnColumnWorker_Text).IsAssignableFrom(type))
-                    continue;
                 MethodInfo m = AccessTools.DeclaredMethod(type, "GetTextFor", [typeof(Pawn)]);
                 if (m == null || m.IsAbstract)
                     continue;
                 harmony.Patch(m, prefix: textPrefix, finalizer: textFinalizer);
                 textPatched++;
+            }
+
+            var iconPrefix = new HarmonyMethod(typeof(IconCache), nameof(IconCache.Prefix));
+            var iconFinalizer = new HarmonyMethod(typeof(IconCache), nameof(IconCache.Finalizer));
+            int iconPatched = 0;
+            foreach (Type type in typeof(PawnColumnWorker_Icon).AllSubclasses())
+            {
+                // Clickable / paintable icons (e.g. drop all) must reflect the click immediately.
+                if (IsInteractiveIcon(type))
+                    continue;
+                MethodInfo m = AccessTools.DeclaredMethod(type, "GetIconFor", [typeof(Pawn)]);
+                if (m == null || m.IsAbstract)
+                    continue;
+                harmony.Patch(m, prefix: iconPrefix, finalizer: iconFinalizer);
+                iconPatched++;
             }
 
             // Sorting by a stat column: evaluate each pawn's stat once per sort, not once per comparison.
@@ -78,7 +92,30 @@ namespace NumbersPerformanceFix
                 harmony.Patch(AccessTools.DeclaredMethod(type, "GetTip"), prefix: tipPrefix);
             }
 
-            Log.Message($"[NumbersPerformanceFix] Patched Numbers window header, {textPatched} text columns, 2 tooltip columns.");
+            // Gear / inventory: the item list stays live, only the per-item tooltip label is built lazily.
+            var labelTranspiler = new HarmonyMethod(typeof(TipPatch), nameof(TipPatch.LazyThingLabelTranspiler));
+            foreach (Type type in new[] { typeof(PawnColumnWorker_Equipment), typeof(PawnColumnWorker_Inventory) })
+                harmony.Patch(AccessTools.DeclaredMethod(type, "DrawThing"), transpiler: labelTranspiler);
+
+            // Need bars: cache change arrow and instant level.
+            harmony.Patch(AccessTools.DeclaredMethod(typeof(PawnColumnWorker_Need), nameof(PawnColumnWorker.DoCell)),
+                transpiler: new HarmonyMethod(typeof(NeedCache), nameof(NeedCache.Transpiler)));
+
+            // Dev mode only: per-column cell cost, logged periodically while a Numbers table is open.
+            harmony.Patch(AccessTools.Method(typeof(PawnTable), nameof(PawnTable.PawnTableOnGUI)),
+                transpiler: new HarmonyMethod(typeof(CellProfiler), nameof(CellProfiler.Transpiler)));
+
+            Log.Message($"[NumbersPerformanceFix] Patched Numbers window header, {textPatched} text columns, {iconPatched} icon columns, 4 tooltip columns.");
+        }
+
+        private static bool IsInteractiveIcon(Type type)
+        {
+            for (Type t = type; t != null && t != typeof(PawnColumnWorker_Icon); t = t.BaseType)
+            {
+                if (AccessTools.DeclaredMethod(t, "ClickedIcon") != null || AccessTools.DeclaredMethod(t, "PaintedIcon") != null)
+                    return true;
+            }
+            return false;
         }
     }
 
@@ -109,43 +146,44 @@ namespace NumbersPerformanceFix
     }
 
     /// <summary>
-    /// Caches GetTextFor per (column, pawn). Stale entries keep showing their last value and are
-    /// recomputed within a per-frame time budget, so expensive stats (e.g. melee DPS) are spread
-    /// over several frames instead of all being recomputed in one frame.
+    /// Shared state of the cell caches. Stale entries keep showing their last value and are
+    /// recomputed within a per-frame time budget, so expensive values (e.g. melee DPS) are spread
+    /// over several frames instead of all being recomputed in one frame. A click or key press
+    /// marks every entry stale.
     /// </summary>
-    public static class TextCache
+    internal static class CacheClock
     {
-        private const float Interval = 0.25f;
+        public const float Interval = 0.5f;
+        public const int MaxEntries = 5000;
         private const double FrameBudgetMs = 1.0;
-        private const int MaxEntries = 5000;
+        // A single refresh can cost several ms (e.g. melee DPS); the excess is paid back over the
+        // following frames, so the average stays within the budget. Capped so one very slow value
+        // cannot stall all refreshes for long.
+        private const double MaxDebtMs = 20.0;
+        // Entries invalidated by a click are refreshed before ones that merely aged out.
+        private const float ClickPriority = 1000f;
 
-        private struct Entry
-        {
-            public string text;
-            public float time;
-            public int generation;
-        }
-
-        private static readonly Dictionary<(PawnColumnWorker, Pawn), Entry> cache = [];
         // Only used to detect clicks / key presses; the interval itself is tracked per entry.
         private static readonly Refresher clickRefresher = new(float.MaxValue);
         private static readonly long budgetTicks = (long)(FrameBudgetMs * Stopwatch.Frequency / 1000.0);
+        private static readonly long maxDebtTicks = (long)(MaxDebtMs * Stopwatch.Frequency / 1000.0);
 
-        private static int generation;
+        public static int generation;
         private static int frame = -1;
         private static long spentTicks;
         private static int depth;
+        // Oldest-first: only entries at least about as old as the ones denied last frame are refreshed.
+        private static float minRefreshAge;
+        private static float maxDeniedAge;
 
-        private const long Hit = -1;
-        private const long Nested = -2;
+        public const long Hit = -1;
+        public const long Bypass = -2;
 
-        public static bool Prefix(PawnColumnWorker __instance, Pawn __0, ref string __result, out long __state)
+        /// <summary>False for nested calls and outside Numbers windows; the original then runs uncached.</summary>
+        public static bool Active()
         {
-            if (depth > 0)
-            {
-                __state = Nested;
-                return true;
-            }
+            if (depth > 0 || Find.WindowStack?.currentlyDrawnWindow is not MainTabWindow_Numbers)
+                return false;
 
             if (clickRefresher.ShouldRefresh())
                 generation++;
@@ -154,22 +192,76 @@ namespace NumbersPerformanceFix
             if (f != frame)
             {
                 frame = f;
-                spentTicks = 0;
+                spentTicks = Math.Min(Math.Max(spentTicks - budgetTicks, 0), maxDebtTicks);
+                minRefreshAge = maxDeniedAge * 0.75f;
+                maxDeniedAge = 0f;
             }
+            return true;
+        }
 
-            if (cache.TryGetValue((__instance, __0), out Entry entry))
-            {
-                bool fresh = entry.generation == generation && Time.realtimeSinceStartup - entry.time < Interval;
-                if (fresh || spentTicks >= budgetTicks)
-                {
-                    __result = entry.text;
-                    __state = Hit;
-                    return false;
-                }
-            }
+        /// <summary>
+        /// Fresh while no click happened and either the game has not ticked (paused) or the
+        /// interval has not elapsed.
+        /// </summary>
+        public static bool IsFresh<T>(in CacheEntry<T> e)
+            => e.generation == generation && (e.tick == Find.TickManager.TicksGame || Time.realtimeSinceStartup - e.time < Interval);
 
+        /// <summary>True when the cached value should be served instead of recomputing it now.</summary>
+        public static bool CanServe<T>(in CacheEntry<T> e)
+        {
+            if (IsFresh(e))
+                return true;
+            float age = Time.realtimeSinceStartup - e.time + (e.generation != generation ? ClickPriority : 0f);
+            if (spentTicks < budgetTicks && age >= minRefreshAge)
+                return false;
+            if (age > maxDeniedAge)
+                maxDeniedAge = age;
+            return true;
+        }
+
+        public static CacheEntry<T> Stamp<T>(T value)
+            => new() { value = value, time = Time.realtimeSinceStartup, tick = Find.TickManager.TicksGame, generation = generation };
+
+        public static long Begin()
+        {
             depth++;
-            __state = Stopwatch.GetTimestamp();
+            return Stopwatch.GetTimestamp();
+        }
+
+        public static void End(long start)
+        {
+            depth--;
+            spentTicks += Stopwatch.GetTimestamp() - start;
+        }
+    }
+
+    internal struct CacheEntry<T>
+    {
+        public T value;
+        public float time;
+        public int tick;
+        public int generation;
+    }
+
+    /// <summary>Caches GetTextFor per (column, pawn).</summary>
+    public static class TextCache
+    {
+        private static readonly Dictionary<(PawnColumnWorker, Pawn), CacheEntry<string>> cache = [];
+
+        public static bool Prefix(PawnColumnWorker __instance, Pawn __0, ref string __result, out long __state)
+        {
+            if (!CacheClock.Active())
+            {
+                __state = CacheClock.Bypass;
+                return true;
+            }
+            if (cache.TryGetValue((__instance, __0), out var entry) && CacheClock.CanServe(entry))
+            {
+                __result = entry.value;
+                __state = CacheClock.Hit;
+                return false;
+            }
+            __state = CacheClock.Begin();
             return true;
         }
 
@@ -177,16 +269,101 @@ namespace NumbersPerformanceFix
         {
             if (__state >= 0)
             {
-                depth--;
-                spentTicks += Stopwatch.GetTimestamp() - __state;
+                CacheClock.End(__state);
                 if (__exception == null)
                 {
-                    if (cache.Count >= MaxEntries)
+                    if (cache.Count >= CacheClock.MaxEntries)
                         cache.Clear();
-                    cache[(__instance, __0)] = new Entry { text = __result, time = Time.realtimeSinceStartup, generation = generation };
+                    cache[(__instance, __0)] = CacheClock.Stamp(__result);
                 }
             }
             return __exception;
+        }
+    }
+
+    /// <summary>Caches GetIconFor per (column, pawn) for non-interactive icon columns.</summary>
+    public static class IconCache
+    {
+        private static readonly Dictionary<(PawnColumnWorker, Pawn), CacheEntry<Texture2D>> cache = [];
+
+        public static bool Prefix(PawnColumnWorker __instance, Pawn __0, ref Texture2D __result, out long __state)
+        {
+            if (!CacheClock.Active())
+            {
+                __state = CacheClock.Bypass;
+                return true;
+            }
+            if (cache.TryGetValue((__instance, __0), out var entry) && CacheClock.CanServe(entry))
+            {
+                __result = entry.value;
+                __state = CacheClock.Hit;
+                return false;
+            }
+            __state = CacheClock.Begin();
+            return true;
+        }
+
+        public static Exception Finalizer(PawnColumnWorker __instance, Pawn __0, Texture2D __result, long __state, Exception __exception)
+        {
+            if (__state >= 0)
+            {
+                CacheClock.End(__state);
+                if (__exception == null)
+                {
+                    if (cache.Count >= CacheClock.MaxEntries)
+                        cache.Clear();
+                    cache[(__instance, __0)] = CacheClock.Stamp(__result);
+                }
+            }
+            return __exception;
+        }
+    }
+
+    /// <summary>
+    /// Need bars: the change arrow (e.g. food fall rate) and instant level are cached; the bar
+    /// level itself stays live.
+    /// </summary>
+    public static class NeedCache
+    {
+        private static readonly Dictionary<Need, CacheEntry<(int arrow, float instant)>> cache = [];
+
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var replacements = new Dictionary<MethodInfo, MethodInfo>
+            {
+                [AccessTools.PropertyGetter(typeof(Need), nameof(Need.GUIChangeArrow))] = AccessTools.Method(typeof(NeedCache), nameof(Arrow)),
+                [AccessTools.PropertyGetter(typeof(Need), nameof(Need.CurInstantLevelPercentage))] = AccessTools.Method(typeof(NeedCache), nameof(Instant)),
+            };
+            int replaced = 0;
+            foreach (CodeInstruction ins in instructions)
+            {
+                if (ins.operand is MethodInfo mi && replacements.TryGetValue(mi, out MethodInfo helper))
+                {
+                    ins.opcode = OpCodes.Call;
+                    ins.operand = helper;
+                    replaced++;
+                }
+                yield return ins;
+            }
+            if (replaced == 0)
+                Log.Warning("[NumbersPerformanceFix] Need bar values not found; Numbers may have changed.");
+        }
+
+        public static int Arrow(Need need) => Get(need).arrow;
+
+        public static float Instant(Need need) => Get(need).instant;
+
+        private static (int arrow, float instant) Get(Need need)
+        {
+            if (!CacheClock.Active())
+                return (need.GUIChangeArrow, need.CurInstantLevelPercentage);
+            if (cache.TryGetValue(need, out var entry) && CacheClock.IsFresh(entry))
+                return entry.value;
+            var value = (need.GUIChangeArrow, need.CurInstantLevelPercentage);
+            if (cache.Count >= CacheClock.MaxEntries)
+                cache.Clear();
+            cache[need] = CacheClock.Stamp(value);
+            return value;
         }
     }
 
@@ -342,6 +519,121 @@ namespace NumbersPerformanceFix
                 return true;
             __result = null;
             return false;
+        }
+
+        /// <summary>
+        /// DrawThing(Rect rect, Thing thing, Pawn) ends with TipRegion(rect, new TipSignal(thing.LabelCap)).
+        /// Replace the label with one that is only built when the mouse is over the item.
+        /// </summary>
+        public static IEnumerable<CodeInstruction> LazyThingLabelTranspiler(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo labelCap = AccessTools.PropertyGetter(typeof(Entity), nameof(Entity.LabelCap));
+            ConstructorInfo tipCtor = AccessTools.Constructor(typeof(TipSignal), [typeof(string)]);
+            MethodInfo helper = AccessTools.Method(typeof(TipPatch), nameof(LabelIfHovered));
+
+            List<CodeInstruction> codes = [.. instructions];
+            int replaced = 0;
+            for (int i = 0; i < codes.Count - 1; i++)
+            {
+                if (codes[i].Calls(labelCap) && codes[i + 1].opcode == OpCodes.Newobj && Equals(codes[i + 1].operand, tipCtor))
+                {
+                    // Stack holds the thing; push rect (arg 1) and call LabelIfHovered(thing, rect).
+                    codes[i] = new CodeInstruction(OpCodes.Call, helper).MoveLabelsFrom(codes[i]);
+                    codes.Insert(i, new CodeInstruction(OpCodes.Ldarg_1));
+                    replaced++;
+                    i++;
+                }
+            }
+            if (replaced == 0)
+                Log.Warning("[NumbersPerformanceFix] Gear/inventory tooltip label not found; Numbers may have changed.");
+            return codes;
+        }
+
+        // TipRegion ignores an empty text, and anything outside Repaint or outside the rect anyway.
+        public static string LabelIfHovered(Thing thing, Rect rect)
+            => Event.current.type == EventType.Repaint && Mouse.IsOver(rect) ? thing.LabelCap : "";
+    }
+
+    /// <summary>
+    /// Dev mode only: measures DoCell per column on Repaint in Numbers tables and logs the most
+    /// expensive columns every few seconds, to find what is still worth optimizing.
+    /// </summary>
+    public static class CellProfiler
+    {
+        private const float LogInterval = 10f;
+        private const int TopCount = 10;
+
+        private static readonly Dictionary<PawnColumnDef, long> ticks = [];
+        private static long totalTicks;
+        private static int lastFrame = -1;
+        private static int frames;
+        private static float nextLog;
+
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo doCell = AccessTools.Method(typeof(PawnColumnWorker), nameof(PawnColumnWorker.DoCell));
+            MethodInfo wrapper = AccessTools.Method(typeof(CellProfiler), nameof(DoCell));
+            int replaced = 0;
+            foreach (CodeInstruction ins in instructions)
+            {
+                if (ins.Calls(doCell))
+                {
+                    ins.opcode = OpCodes.Call;
+                    ins.operand = wrapper;
+                    replaced++;
+                }
+                yield return ins;
+            }
+            if (replaced == 0)
+                Log.Warning("[NumbersPerformanceFix] PawnTable DoCell call not found; cell profiler disabled.");
+        }
+
+        public static void DoCell(PawnColumnWorker worker, Rect rect, Pawn pawn, PawnTable table)
+        {
+            if (!Prefs.DevMode || table is not PawnTable_NumbersMain || Event.current.type != EventType.Repaint)
+            {
+                worker.DoCell(rect, pawn, table);
+                return;
+            }
+
+            long start = Stopwatch.GetTimestamp();
+            try
+            {
+                worker.DoCell(rect, pawn, table);
+            }
+            finally
+            {
+                Record(worker.def, Stopwatch.GetTimestamp() - start);
+            }
+        }
+
+        private static void Record(PawnColumnDef def, long elapsed)
+        {
+            int f = Time.frameCount;
+            if (f != lastFrame)
+            {
+                lastFrame = f;
+                float now = Time.realtimeSinceStartup;
+                if (frames > 0 && now >= nextLog)
+                    Flush();
+                if (frames == 0)
+                    nextLog = now + LogInterval;
+                frames++;
+            }
+            ticks.TryGetValue(def, out long t);
+            ticks[def] = t + elapsed;
+            totalTicks += elapsed;
+        }
+
+        private static void Flush()
+        {
+            double MsPerFrame(long t) => t * 1000.0 / Stopwatch.Frequency / frames;
+            string top = string.Join(", ", ticks.OrderByDescending(kv => kv.Value).Take(TopCount)
+                .Select(kv => $"{kv.Key.defName} {MsPerFrame(kv.Value):0.000}"));
+            Log.Message($"[NumbersPerformanceFix] cells {MsPerFrame(totalTicks):0.000} ms/frame over {frames} frames; top: {top}");
+            ticks.Clear();
+            totalTicks = 0;
+            frames = 0;
         }
     }
 }
