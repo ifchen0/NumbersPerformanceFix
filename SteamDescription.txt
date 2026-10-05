@@ -27,4 +27,4 @@ Unofficial performance and bug fixes for [url=https://steamcommunity.com/sharedf
 [*]Safe to add to or remove from an existing save.
 [/list]
 [hr][/hr]
-This mod was developed with the help of AI coding tools (Claude Code). Full source code is included in the Source folder for review.
+This mod was developed with the help of AI coding tools (Claude Code). Full source code is included in the Source folder and on [url=https://github.com/ifchen0/NumbersPerformanceFix]GitHub[/url] for review.

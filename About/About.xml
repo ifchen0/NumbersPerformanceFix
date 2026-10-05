@@ -3,6 +3,7 @@
   <name>Numbers Fixes</name>
   <author>ifchen0</author>
   <packageId>ifchen0.numbersperformancefix</packageId>
+  <url>https://github.com/ifchen0/NumbersPerformanceFix</url>
   <supportedVersions><li>1.6</li></supportedVersions>
   <description>Unofficial performance and bug fixes for Numbers. Reduces the lag while a Numbers tab is open, and fixes the prisoner interaction column.
 
