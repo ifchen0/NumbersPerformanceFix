@@ -20,6 +20,10 @@ Unofficial performance and bug fixes for [url=https://steamcommunity.com/sharedf
 
 [b]Fix:[/b] They are now checkboxes (drag to toggle several prisoners), like in the vanilla prisoner tab. Enabling hemogen farming also adds or removes the hemogen extraction bill, as vanilla does.
 
+[h2]Untranslated labels[/h2][b]Bug:[/b] In Traditional Chinese the bottom bar button stays [i]Numbers[/i], and a table saved as default is listed as [i]MainTable (Default)[/i] in the load menu and the mod settings, because Numbers builds that name from the internal def name.
+
+[b]Fix:[/b] The button and default table names are translated (for example [i]殖民者（預設）[/i]). Other languages are unchanged, and saved layouts are not modified.
+
 [h2]Notes[/h2][list]
 [*]Interactive columns (inventory, equipment, drop buttons) still update instantly; only their tooltips are built lazily.
 [*]With Development mode on, the mod logs the most expensive Numbers columns every 10 seconds.

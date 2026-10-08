@@ -26,6 +26,23 @@ namespace NumbersPerformanceFix
         {
             harmony.Patch(AccessTools.Method(typeof(MainTabWindow_PawnTable), nameof(MainTabWindow_PawnTable.PostOpen)),
                 postfix: new HarmonyMethod(typeof(Patcher), nameof(PostOpenPostfix)));
+            TranslateTabLabel();
+            // Mod settings list of stored tables; reachable from the main menu, before any Numbers window.
+            harmony.Patch(AccessTools.Method(typeof(Numbers.Numbers), "RegenPawnTableDefsFromSettings"),
+                postfix: new HarmonyMethod(typeof(DefaultTableLabel), nameof(DefaultTableLabel.SettingsListPostfix)));
+        }
+
+        // Numbers' own Traditional Chinese DefInjected file leaves the bottom bar label as "Numbers".
+        // A DefInjected file here would clash with that key, so the label is replaced from a Keyed
+        // string that only exists in languages that need it.
+        private static void TranslateTabLabel()
+        {
+            MainButtonDef tab = DefDatabase<MainButtonDef>.GetNamedSilentFail("kNumbersOverviewTab");
+            if (tab == null || !"NumbersPerformanceFix_TabLabel".TryTranslate(out TaggedString label))
+                return;
+            tab.label = label.RawText;
+            AccessTools.Field(typeof(Def), "cachedLabelCap")?.SetValue(tab, default(TaggedString));
+            AccessTools.Field(typeof(MainButtonDef), "cachedShortenedLabelCap")?.SetValue(tab, null);
         }
 
         public static void PostOpenPostfix(MainTabWindow_PawnTable __instance)
@@ -105,6 +122,10 @@ namespace NumbersPerformanceFix
             harmony.Patch(AccessTools.DeclaredMethod(typeof(PawnColumnWorker_PrisonerInteraction), "DrawInteractionRadioButton"),
                 prefix: new HarmonyMethod(typeof(PrisonerInteractionPatch), nameof(PrisonerInteractionPatch.Prefix)));
 
+            // "Load layout" menu: stored default tables show a translated name instead of "MainTable (Default)".
+            harmony.Patch(AccessTools.Method(typeof(OptionsMaker), "LoadPlayerCreatedLayouts"),
+                postfix: new HarmonyMethod(typeof(DefaultTableLabel), nameof(DefaultTableLabel.LoadMenuPostfix)));
+
             // Dev mode only: per-column cell cost, logged periodically while a Numbers table is open.
             harmony.Patch(AccessTools.Method(typeof(PawnTable), nameof(PawnTable.PawnTableOnGUI)),
                 transpiler: new HarmonyMethod(typeof(CellProfiler), nameof(CellProfiler.Transpiler)));
@@ -120,6 +141,49 @@ namespace NumbersPerformanceFix
                     return true;
             }
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Numbers names a stored default table after its defName ("MainTable (Default)"), which is never
+    /// translated. Both lists it builds run parallel to the stored settings, so entries are matched by index.
+    /// </summary>
+    public static class DefaultTableLabel
+    {
+        public static void SettingsListPostfix(List<string> __result)
+        {
+            List<string> stored = Stored();
+            for (int i = 0; i < __result.Count && i < stored.Count; i++)
+            {
+                if (TryLabel(stored[i], out string label))
+                    __result[i] = label;
+            }
+        }
+
+        public static void LoadMenuPostfix(List<FloatMenuOption> __result)
+        {
+            List<string> stored = Stored();
+            for (int i = 0; i < __result.Count && i < stored.Count; i++)
+            {
+                if (TryLabel(stored[i], out string label))
+                    __result[i].Label = label;
+            }
+        }
+
+        private static List<string> Stored()
+            => LoadedModManager.GetMod<Numbers.Numbers>().GetSettings<Numbers_Settings>().storedPawnTableDefs;
+
+        private static bool TryLabel(string storedTable, out string label)
+        {
+            label = null;
+            string[] parts = storedTable.Split(',');
+            if (parts.Length < 2 || parts[1] != "Default" || !"NumbersPerformanceFix_DefaultTable".TryTranslate(out TaggedString format))
+                return false;
+            PawnTableDef table = DefDatabase<PawnTableDef>.GetNamedSilentFail(parts[0]);
+            if (table == null)
+                return false;
+            label = format.Formatted(table.LabelCap).Resolve();
+            return true;
         }
     }
 
