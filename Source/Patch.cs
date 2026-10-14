@@ -21,15 +21,20 @@ namespace NumbersPerformanceFix
         // Harmony runs the declaring type's static constructor when patching, and
         // MainTabWindow_Numbers' static constructor needs Find.World. A failed static constructor
         // breaks the type for the whole session, so the Numbers patches are applied lazily,
-        // the first time a Numbers window has been constructed.
+        // once a world exists.
         static Patcher()
         {
+            // Patching takes over a second, so it runs while the game is loading (world already
+            // exists); PostOpen is only a fallback.
+            harmony.Patch(AccessTools.Method(typeof(Game), nameof(Game.FinalizeInit)),
+                postfix: new HarmonyMethod(typeof(Patcher), nameof(ApplyOnce)));
             harmony.Patch(AccessTools.Method(typeof(MainTabWindow_PawnTable), nameof(MainTabWindow_PawnTable.PostOpen)),
                 postfix: new HarmonyMethod(typeof(Patcher), nameof(PostOpenPostfix)));
             TranslateTabLabel();
             // Mod settings list of stored tables; reachable from the main menu, before any Numbers window.
             harmony.Patch(AccessTools.Method(typeof(Numbers.Numbers), "RegenPawnTableDefsFromSettings"),
                 postfix: new HarmonyMethod(typeof(DefaultTableLabel), nameof(DefaultTableLabel.SettingsListPostfix)));
+            OpenProfiler.PatchVanilla(harmony);
         }
 
         // Numbers' own Traditional Chinese DefInjected file leaves the bottom bar label as "Numbers".
@@ -47,12 +52,21 @@ namespace NumbersPerformanceFix
 
         public static void PostOpenPostfix(MainTabWindow_PawnTable __instance)
         {
-            if (applied || __instance is not MainTabWindow_Numbers)
+            if (__instance is MainTabWindow_Numbers)
+                ApplyOnce();
+        }
+
+        public static void ApplyOnce()
+        {
+            if (applied || Find.World == null)
                 return;
             applied = true;
+            long start = Stopwatch.GetTimestamp();
             try
             {
                 ApplyNumbersPatches();
+                OpenProfiler.PatchNumbers(harmony);
+                OpenProfiler.AddPhase("lazy Harmony patching", Stopwatch.GetTimestamp() - start);
             }
             catch (Exception e)
             {
@@ -732,6 +746,7 @@ namespace NumbersPerformanceFix
             ticks.TryGetValue(def, out long t);
             ticks[def] = t + elapsed;
             totalTicks += elapsed;
+            OpenProfiler.AddCell(def, elapsed);
         }
 
         private static void Flush()
@@ -743,6 +758,122 @@ namespace NumbersPerformanceFix
             ticks.Clear();
             totalTicks = 0;
             frames = 0;
+        }
+    }
+
+    /// <summary>
+    /// Dev mode only: breaks down the hitch when a Numbers tab is opened (window creation and
+    /// PostOpen, table recache phases, header, cells) over the first frames, and logs one line per open.
+    /// </summary>
+    public static class OpenProfiler
+    {
+        private const int FramesToWatch = 4;
+
+        private static readonly string[] tablePhases =
+        [
+            "RecacheColumns", "RecachePawns", "RecacheRowHeights", "CalculateHeaderHeight",
+            "CalculateTotalRequiredHeight", "RecacheSize", "RecacheColumnWidths", "RecacheLookTargets",
+            nameof(PawnTable.PawnTableOnGUI),
+        ];
+
+        private static readonly Dictionary<string, long> phases = [];
+        private static readonly Dictionary<PawnColumnDef, long> cells = [];
+        private static readonly List<long> frameTicks = [];
+        private static bool active;
+        private static long lastMark;
+        private static int lastFrame;
+        private static int gcStart;
+
+        public static void PatchVanilla(Harmony harmony)
+        {
+            harmony.Patch(AccessTools.Method(typeof(MainTabsRoot), nameof(MainTabsRoot.ToggleTab)),
+                prefix: new HarmonyMethod(typeof(OpenProfiler), nameof(TogglePrefix)),
+                postfix: new HarmonyMethod(typeof(OpenProfiler), nameof(TogglePostfix)));
+            var prefix = new HarmonyMethod(typeof(OpenProfiler), nameof(PhasePrefix));
+            var postfix = new HarmonyMethod(typeof(OpenProfiler), nameof(PhasePostfix));
+            foreach (string name in tablePhases)
+                harmony.Patch(AccessTools.Method(typeof(PawnTable), name), prefix: prefix, postfix: postfix);
+            harmony.Patch(AccessTools.Method(typeof(MainTabWindow_PawnTable), nameof(MainTabWindow_PawnTable.PostOpen)),
+                prefix: prefix, postfix: postfix);
+        }
+
+        // Numbers types must not be patched at startup (see Patcher).
+        public static void PatchNumbers(Harmony harmony)
+        {
+            harmony.Patch(AccessTools.Method(typeof(MainTabWindow_Numbers), nameof(MainTabWindow_Numbers.DoWindowContents)),
+                prefix: new HarmonyMethod(typeof(OpenProfiler), nameof(WindowPrefix)),
+                postfix: new HarmonyMethod(typeof(OpenProfiler), nameof(PhasePostfix)));
+        }
+
+        public static void TogglePrefix(MainButtonDef newTab, out long __state)
+        {
+            __state = 0;
+            if (!Prefs.DevMode || newTab?.tabWindowClass == null || !typeof(MainTabWindow_Numbers).IsAssignableFrom(newTab.tabWindowClass)
+                || Find.MainTabsRoot.OpenTab == newTab)
+                return;
+            active = true;
+            phases.Clear();
+            cells.Clear();
+            frameTicks.Clear();
+            gcStart = GC.CollectionCount(0);
+            lastFrame = Time.frameCount;
+            __state = lastMark = Stopwatch.GetTimestamp();
+        }
+
+        public static void TogglePostfix(long __state)
+        {
+            if (__state != 0)
+                AddPhase("ToggleTab (window ctor + PostOpen)", Stopwatch.GetTimestamp() - __state);
+        }
+
+        public static void PhasePrefix(object __instance, out long __state)
+            => __state = active && __instance is PawnTable_NumbersMain or MainTabWindow_Numbers ? Stopwatch.GetTimestamp() : 0;
+
+        public static void PhasePostfix(MethodBase __originalMethod, long __state)
+        {
+            if (__state != 0)
+                AddPhase($"{__originalMethod.DeclaringType.Name}.{__originalMethod.Name}", Stopwatch.GetTimestamp() - __state);
+        }
+
+        public static void WindowPrefix(object __instance, out long __state)
+        {
+            if (active && Time.frameCount != lastFrame)
+            {
+                long now = Stopwatch.GetTimestamp();
+                frameTicks.Add(now - lastMark);
+                lastMark = now;
+                lastFrame = Time.frameCount;
+                if (frameTicks.Count > FramesToWatch)
+                    Flush();
+            }
+            PhasePrefix(__instance, out __state);
+        }
+
+        public static void AddPhase(string name, long elapsed)
+        {
+            if (!active)
+                return;
+            phases.TryGetValue(name, out long t);
+            phases[name] = t + elapsed;
+        }
+
+        public static void AddCell(PawnColumnDef def, long elapsed)
+        {
+            if (!active)
+                return;
+            cells.TryGetValue(def, out long t);
+            cells[def] = t + elapsed;
+        }
+
+        private static void Flush()
+        {
+            active = false;
+            static string Ms(long t) => (t * 1000.0 / Stopwatch.Frequency).ToString("0.0");
+            string frames = string.Join(", ", frameTicks.Select(Ms));
+            string phaseText = string.Join(", ", phases.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {Ms(kv.Value)}"));
+            string cellText = string.Join(", ", cells.OrderByDescending(kv => kv.Value).Take(8).Select(kv => $"{kv.Key.defName} {Ms(kv.Value)}"));
+            Log.Message($"[NumbersPerformanceFix] open: frame ms {frames}; gen0 GCs {GC.CollectionCount(0) - gcStart}; "
+                + $"phases ms (summed over {FramesToWatch} frames): {phaseText}; top cells ms: {cellText}");
         }
     }
 }

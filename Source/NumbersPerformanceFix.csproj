@@ -18,7 +18,7 @@
     <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(Managed)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(Managed)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(Managed)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="0Harmony"><HintPath>$(Workshop)\2009463077\Current\Assemblies\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(Workshop)\2009463077\1.6\Assemblies\0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Numbers"><HintPath>$(Workshop)\1414302321\1.6\Assemblies\Numbers.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 </Project>
