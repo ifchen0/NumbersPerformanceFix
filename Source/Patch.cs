@@ -453,11 +453,19 @@ namespace NumbersPerformanceFix
     /// Numbers draws every prisoner interaction mode as a radio button and calls
     /// SetExclusiveInteraction, which vanilla rejects for non-exclusive modes (hemogen farm,
     /// bloodfeed only). Draw those as paintable checkboxes and toggle them like ITab_Pawn_Visitor.
+    /// Modes the vanilla tab hides for this pawn (e.g. recruit on unwaveringly loyal prisoners,
+    /// hemogen farm on hemogenic pawns) are left blank.
     /// </summary>
     public static class PrisonerInteractionPatch
     {
+        private static int bloodfeederFrame = -1;
+        private static Map bloodfeederMap;
+        private static bool bloodfeederResult;
+
         public static bool Prefix(Rect rect, Pawn pawn, PrisonerInteractionModeDef prisonerInteraction)
         {
+            if (!CanUseMode(pawn, prisonerInteraction))
+                return false;
             if (!prisonerInteraction.isNonExclusiveInteraction)
                 return true;
 
@@ -470,6 +478,47 @@ namespace NumbersPerformanceFix
                 NonExclusiveInteractionToggled(pawn, prisonerInteraction, checkOn);
             }
             return false;
+        }
+
+        // Same filter as ITab_Pawn_Visitor.CanUsePrisonerInteractionMode.
+        private static bool CanUseMode(Pawn pawn, PrisonerInteractionModeDef mode)
+        {
+            if (mode.hideIfNotRecruitable && !pawn.guest.Recruitable)
+                return false;
+            if (!mode.allowOnWildMan && pawn.IsWildMan())
+                return false;
+            if (mode.hideIfNoBloodfeeders && pawn.MapHeld != null && !ColonyHasAnyBloodfeeder(pawn.MapHeld))
+                return false;
+            if (mode.hideOnHemogenicPawns && ModsConfig.BiotechActive && pawn.genes != null && pawn.genes.HasActiveGene(GeneDefOf.Hemogenic))
+                return false;
+            if (!mode.allowInClassicIdeoMode && Find.IdeoManager.classicMode)
+                return false;
+            if (ModsConfig.AnomalyActive)
+            {
+                if (mode.hideIfNotStudiableAsPrisoner && !IsStudiable(pawn))
+                    return false;
+                if (mode.hideIfGrayFleshNotAppeared && !Find.Anomaly.hasSeenGrayFlesh)
+                    return false;
+            }
+            return true;
+        }
+
+        // Cached per frame and map: every prisoner row asks the same question.
+        private static bool ColonyHasAnyBloodfeeder(Map map)
+        {
+            if (bloodfeederFrame == Time.frameCount && bloodfeederMap == map)
+                return bloodfeederResult;
+            bloodfeederFrame = Time.frameCount;
+            bloodfeederMap = map;
+            bloodfeederResult = ModsConfig.BiotechActive && map.mapPawns.FreeColonistsAndPrisonersSpawned.Any(p => p.IsBloodfeeder());
+            return bloodfeederResult;
+        }
+
+        private static bool IsStudiable(Pawn pawn)
+        {
+            if (!pawn.TryGetComp<CompStudiable>(out var comp) || !comp.EverStudiable())
+                return false;
+            return pawn.kindDef.studiableAsPrisoner && !pawn.everLostEgo;
         }
 
         // Same as ITab_Pawn_Visitor.NonExclusiveInteractionToggled, for an arbitrary pawn.
