@@ -5,7 +5,7 @@
   <packageId>ifchen0.numbersperformancefix</packageId>
   <url>https://github.com/ifchen0/NumbersPerformanceFix</url>
   <supportedVersions><li>1.6</li><li>1.7</li></supportedVersions>
-  <description>Unofficial performance and bug fixes for Numbers. Reduces the lag while a Numbers tab is open, and fixes the prisoner interaction column.
+  <description>Unofficial performance and bug fixes for Numbers. Reduces the lag while a Numbers tab is open, and fixes the prisoner interaction, faction and ideology columns.
 
 Numbers redraws its window several times per frame, and every time it:
 - builds and sorts every drop-down menu at the top (Stats, Health, Abilities, Other...), even though they are only needed when a button is clicked;
@@ -22,6 +22,8 @@ Fix:
 - Skill, disease, gear and inventory tooltips are built only for the cell under the mouse.
 
 Also fixes the prisoner interaction column: Hemogen farm and Bloodfeed only are now checkboxes that can be combined with the other modes, as in the vanilla prisoner tab (they could not be set before).
+
+Faction column: the faction icon is shown before the name, and sorting no longer fails for pawns without a faction. Ideology column: sorts by ideoligion, then by certainty (it sorted by certainty only, which looked random).
 
 Interactive columns (inventory, equipment, drop buttons) still update instantly.
 With Development mode on, the most expensive Numbers columns are logged every 10 seconds.

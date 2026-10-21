@@ -136,6 +136,11 @@ namespace NumbersPerformanceFix
             harmony.Patch(AccessTools.DeclaredMethod(typeof(PawnColumnWorker_PrisonerInteraction), "DrawInteractionRadioButton"),
                 prefix: new HarmonyMethod(typeof(PrisonerInteractionPatch), nameof(PrisonerInteractionPatch.Prefix)));
 
+            // Faction column: faction icon before the name, null-safe sort. Ideology column: sort by ideoligion.
+            FactionColumnPatch.Apply(harmony);
+            harmony.Patch(AccessTools.DeclaredMethod(typeof(PawnColumnWorker_Ideology), nameof(PawnColumnWorker.Compare)),
+                prefix: new HarmonyMethod(typeof(IdeologyComparePatch), nameof(IdeologyComparePatch.Prefix)));
+
             // "Load layout" menu: stored default tables show a translated name instead of "MainTable (Default)".
             harmony.Patch(AccessTools.Method(typeof(OptionsMaker), "LoadPlayerCreatedLayouts"),
                 postfix: new HarmonyMethod(typeof(DefaultTableLabel), nameof(DefaultTableLabel.LoadMenuPostfix)));
@@ -536,6 +541,73 @@ namespace NumbersPerformanceFix
             {
                 pawn.BillStack.Bills.Remove(bill);
             }
+        }
+    }
+
+    /// <summary>
+    /// Numbers' faction column only shows the faction name. Draw the faction icon (as in the vanilla
+    /// factions tab) left of the name, and sort without throwing on pawns that have no faction.
+    /// </summary>
+    public static class FactionColumnPatch
+    {
+        private const float IconSize = 24f;
+        private const float IconGap = 4f;
+
+        // Numbers' PawnColumnWorker_Faction is internal.
+        private static Type factionColumn;
+
+        public static void Apply(Harmony harmony)
+        {
+            factionColumn = AccessTools.TypeByName("Numbers.PawnColumnWorker_Faction");
+            if (factionColumn == null)
+            {
+                Log.Warning("[NumbersPerformanceFix] Faction column not found; Numbers may have changed.");
+                return;
+            }
+            // The column inherits DoCell, so the shared base method is patched and filtered by type.
+            harmony.Patch(AccessTools.DeclaredMethod(typeof(PawnColumnWorker_Text), nameof(PawnColumnWorker.DoCell)),
+                prefix: new HarmonyMethod(typeof(FactionColumnPatch), nameof(DoCellPrefix)));
+            harmony.Patch(AccessTools.DeclaredMethod(factionColumn, nameof(PawnColumnWorker.GetMinWidth)),
+                postfix: new HarmonyMethod(typeof(FactionColumnPatch), nameof(MinWidthPostfix)));
+            harmony.Patch(AccessTools.DeclaredMethod(factionColumn, nameof(PawnColumnWorker.Compare)),
+                prefix: new HarmonyMethod(typeof(FactionColumnPatch), nameof(ComparePrefix)));
+        }
+
+        // Draws the icon, then lets the original draw the name in the rest of the cell.
+        public static void DoCellPrefix(PawnColumnWorker __instance, ref Rect rect, Pawn pawn)
+        {
+            if (__instance.GetType() != factionColumn || pawn.Faction == null)
+                return;
+            Rect icon = new(rect.x, rect.y + (rect.height - IconSize) / 2f, IconSize, IconSize);
+            FactionUIUtility.DrawFactionIconWithTooltip(icon, pawn.Faction);
+            rect.xMin += IconSize + IconGap;
+        }
+
+        public static void MinWidthPostfix(ref int __result) => __result += (int)(IconSize + IconGap);
+
+        // The original calls CompareTo on the name, which throws for pawns without a faction.
+        public static bool ComparePrefix(Pawn a, Pawn b, ref int __result)
+        {
+            __result = string.Compare(a.Faction?.Name, b.Faction?.Name);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Numbers' ideology column shows the ideoligion but sorts by certainty, so the order looks
+    /// random. Sort by ideoligion name (pawns of one ideoligion grouped), then by certainty.
+    /// </summary>
+    public static class IdeologyComparePatch
+    {
+        public static bool Prefix(Pawn a, Pawn b, ref int __result)
+        {
+            Ideo ia = a.Ideo, ib = b.Ideo;
+            __result = string.Compare(ia?.name, ib?.name);
+            if (__result == 0 && ia != null && ib != null && ia != ib)
+                __result = ia.id.CompareTo(ib.id);
+            if (__result == 0)
+                __result = (a.ideo?.Certainty ?? 0f).CompareTo(b.ideo?.Certainty ?? 0f);
+            return false;
         }
     }
 
