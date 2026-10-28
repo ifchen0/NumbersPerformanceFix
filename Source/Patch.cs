@@ -799,20 +799,11 @@ namespace NumbersPerformanceFix
     }
 
     /// <summary>
-    /// Dev mode only: measures DoCell per column on Repaint in Numbers tables and logs the most
-    /// expensive columns every few seconds, to find what is still worth optimizing.
+    /// Dev mode only: measures DoCell per column on Repaint in Numbers tables while OpenProfiler
+    /// watches the first frames after a tab opens, so its line lists the most expensive columns.
     /// </summary>
     public static class CellProfiler
     {
-        private const float LogInterval = 10f;
-        private const int TopCount = 10;
-
-        private static readonly Dictionary<PawnColumnDef, long> ticks = [];
-        private static long totalTicks;
-        private static int lastFrame = -1;
-        private static int frames;
-        private static float nextLog;
-
         public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
             MethodInfo doCell = AccessTools.Method(typeof(PawnColumnWorker), nameof(PawnColumnWorker.DoCell));
@@ -834,7 +825,7 @@ namespace NumbersPerformanceFix
 
         public static void DoCell(PawnColumnWorker worker, Rect rect, Pawn pawn, PawnTable table)
         {
-            if (!Prefs.DevMode || table is not PawnTable_NumbersMain || Event.current.type != EventType.Repaint)
+            if (!OpenProfiler.Active || table is not PawnTable_NumbersMain || Event.current.type != EventType.Repaint)
             {
                 worker.DoCell(rect, pawn, table);
                 return;
@@ -847,38 +838,8 @@ namespace NumbersPerformanceFix
             }
             finally
             {
-                Record(worker.def, Stopwatch.GetTimestamp() - start);
+                OpenProfiler.AddCell(worker.def, Stopwatch.GetTimestamp() - start);
             }
-        }
-
-        private static void Record(PawnColumnDef def, long elapsed)
-        {
-            int f = Time.frameCount;
-            if (f != lastFrame)
-            {
-                lastFrame = f;
-                float now = Time.realtimeSinceStartup;
-                if (frames > 0 && now >= nextLog)
-                    Flush();
-                if (frames == 0)
-                    nextLog = now + LogInterval;
-                frames++;
-            }
-            ticks.TryGetValue(def, out long t);
-            ticks[def] = t + elapsed;
-            totalTicks += elapsed;
-            OpenProfiler.AddCell(def, elapsed);
-        }
-
-        private static void Flush()
-        {
-            double MsPerFrame(long t) => t * 1000.0 / Stopwatch.Frequency / frames;
-            string top = string.Join(", ", ticks.OrderByDescending(kv => kv.Value).Take(TopCount)
-                .Select(kv => $"{kv.Key.defName} {MsPerFrame(kv.Value):0.000}"));
-            Log.Message($"[NumbersPerformanceFix] cells {MsPerFrame(totalTicks):0.000} ms/frame over {frames} frames; top: {top}");
-            ticks.Clear();
-            totalTicks = 0;
-            frames = 0;
         }
     }
 
@@ -904,6 +865,8 @@ namespace NumbersPerformanceFix
         private static long lastMark;
         private static int lastFrame;
         private static int gcStart;
+
+        public static bool Active => active;
 
         public static void PatchVanilla(Harmony harmony)
         {

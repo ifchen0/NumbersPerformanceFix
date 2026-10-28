@@ -26,7 +26,7 @@ Also fixes the prisoner interaction column: Hemogen farm and Bloodfeed only are 
 Faction column: the faction icon is shown before the name, and sorting no longer fails for pawns without a faction. Ideology column: sorts by ideoligion, then by certainty (it sorted by certainty only, which looked random).
 
 Interactive columns (inventory, equipment, drop buttons) still update instantly.
-With Development mode on, the most expensive Numbers columns are logged every 10 seconds.
+With Development mode on, opening a Numbers tab logs one line with its slowest steps and columns.
 
 Notes:
 - Requires Numbers. Load after Numbers.

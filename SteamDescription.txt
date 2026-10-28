@@ -30,7 +30,7 @@ Unofficial performance and bug fixes for [url=https://steamcommunity.com/sharedf
 
 [h2]Notes[/h2][list]
 [*]Interactive columns (inventory, equipment, drop buttons) still update instantly; only their tooltips are built lazily.
-[*]With Development mode on, the mod logs the most expensive Numbers columns every 10 seconds.
+[*]With Development mode on, opening a Numbers tab logs one line with its slowest steps and columns.
 [*]Requires Numbers. Load after Numbers.
 [*]Safe to add to or remove from an existing save.
 [/list]
